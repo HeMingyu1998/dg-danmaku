@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="content-type" content="text/html;charset=utf-8">
+    <meta http-equiv="content-language" content="zh-CN">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="renderer" content="webkit">
+    <meta content="never" name="referrer">
+
+    <title>探针 - 开平环境检测</title>
+
+    <!-- 用 Full 版：它含本地自签路径，能把 /app/start 的真实结果暴露出来 -->
+    <script src="./Lib/h2non/jshashes.min.js" type="text/javascript"></script>
+    <script src="./Lib/PlayWithMe.js/BiLive_PlayWithMe.Full.js" type="text/javascript"></script>
+
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            background: #14161A;
+            color: #E6E6E6;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.7;
+        }
+
+        #Wrap {
+            padding: 12px;
+        }
+
+        h3 {
+            margin: 0 0 6px;
+            font-size: 14px;
+            color: #FF6699;
+        }
+
+        pre {
+            margin: 0 0 14px;
+            padding: 8px;
+            background: #1D2026;
+            border: 1px solid #2C3038;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .Ok {
+            color: #4CE86B;
+        }
+
+        .Bad {
+            color: #FF5C5C;
+        }
+
+        .Warn {
+            color: #FFC94D;
+        }
+
+        #CopyBtn {
+            padding: 6px 14px;
+            font-size: 13px;
+            color: #FFF;
+            background: #FF6699;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-bottom: 14px;
+        }
+
+        #CopyBtn:hover {
+            background: #E85A8A;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="Wrap">
+        <h3>环境参数</h3>
+        <pre id="OutEnv">采集中…</pre>
+
+        <h3>本地存储是否可用</h3>
+        <pre id="OutStorage">检测中…</pre>
+
+        <h3>AppStart 结果（关键）</h3>
+        <pre id="OutStart">等待中…</pre>
+
+        <h3>控制台错误</h3>
+        <pre id="OutErr">（暂无）</pre>
+
+        <button id="CopyBtn">复制全部结果</button>
+    </div>
+
+    <script>
+        /* ============================================================
+         *  探针插件 —— 目的只有一个：
+         *  搞清楚直播姬加载插件时，到底给了什么参数、能不能拿到长链
+         *
+         *  它不做任何业务，所有结果都直接画在页面上，
+         *  因为直播姬里不方便开F12。
+         * ==========================================================*/
+
+        // 全局收集所有输出，方便一键复制
+        const ProbeLog = {};
+
+        function El(Id) { return document.getElementById(Id); }
+
+        /* ---------- 1. 环境参数 ---------- */
+        function CollectEnv() {
+            const Params = [...new URLSearchParams(window.location.search)];
+            const Lines = [];
+
+            Lines.push("完整地址 : " + window.location.href);
+            Lines.push("来源origin: " + window.location.origin);
+            Lines.push("页面尺寸 : " + window.innerWidth + " × " + window.innerHeight);
+            Lines.push("设备像素比: " + window.devicePixelRatio);
+            Lines.push("UserAgent : " + navigator.userAgent);
+            Lines.push("是否在iframe中: " + (window.top !== window.self ? "是" : "否"));
+            Lines.push("");
+
+            if (Params.length === 0) {
+                Lines.push("【URL参数】没有任何参数");
+            } else {
+                Lines.push("【URL参数】共 " + Params.length + " 个：");
+                Params.forEach(([K, V]) => {
+                    // 签名/密钥类参数只显示前后几位，避免泄露
+                    const Sensitive = /code|sign|key|token/i.test(K);
+                    const Shown = Sensitive && V.length > 8
+                        ? V.slice(0, 4) + "…(" + V.length + "字符)…" + V.slice(-4)
+                        : V;
+                    Lines.push("   " + K + " = " + Shown);
+                });
+            }
+
+            // 这几项是判断授权方式的关键
+            Lines.push("");
+            Lines.push("【关键判断】");
+            const Has = (K) => Params.some(([Key]) => Key.toUpperCase() === K);
+            Lines.push("  有 CODESIGN ? " + (Has("CODESIGN") ? "有 ← 平台下发了签名" : "没有"));
+            Lines.push("  有 CODE     ? " + (Has("CODE") ? "有 ← 平台下发了身份码" : "没有"));
+            Lines.push("  有 MID      ? " + (Has("MID") ? "有" : "没有"));
+            Lines.push("  有 TIMESTAMP? " + (Has("TIMESTAMP") ? "有" : "没有"));
+            Lines.push("  有 plug_env ? " + (Has("PLUG_ENV") ? "有，值=" + new URLSearchParams(location.search).get("plug_env") : "没有"));
+
+            ProbeLog.env = Lines.join("\n");
+            El("OutEnv").textContent = ProbeLog.env;
+        }
+
+        /* ---------- 2. 本地存储 ---------- */
+        function CollectStorage() {
+            const Lines = [];
+            try {
+                localStorage.setItem("__probe", "1");
+                const Got = localStorage.getItem("__probe");
+                localStorage.removeItem("__probe");
+                if (Got === "1") {
+                    Lines.push("localStorage : 可读可写 ← 设置页的宽高能存住");
+                } else {
+                    Lines.push("localStorage : 写入后读不回来（异常）");
+                }
+            } catch (E) {
+                Lines.push("localStorage : 不可用 ← " + E.name);
+                Lines.push("   → 设置页的宽高将无法持久化，需要改用URL参数方案");
+            }
+            ProbeLog.storage = Lines.join("\n");
+            El("OutStorage").textContent = ProbeLog.storage;
+        }
+
+        /* ---------- 3. 捕获控制台错误 ---------- */
+        const ErrLines = [];
+        function PushErr(Text) {
+            ErrLines.push(Text);
+            El("OutErr").textContent = ErrLines.join("\n\n");
+            ProbeLog.err = ErrLines.join("\n\n");
+        }
+
+        window.addEventListener("error", (E) => {
+            // 跨域脚本的错误拿不到细节，只能拿到 Script error.
+            PushErr("[" + (E.filename || "?") + ":" + (E.lineno || "?") + "] " + (E.message || "(无信息)"));
+        });
+
+        window.addEventListener("unhandledrejection", (E) => {
+            const R = E.reason;
+            PushErr("Promise未捕获: " + (R && R.message ? R.message : String(R)));
+        });
+
+        /* ---------- 4. AppStart 结果（最关键） ---------- */
+        //
+        // 思路：把 SDK 的 AfterAppStart 包一层，观察它最终拿到了什么。
+        // 同时把 /v2/app/start 的原始响应也截下来。
+        //
+        const OrigAfter = BiLive_PlayWithMeJS.AfterAppStart;
+        BiLive_PlayWithMeJS.AfterAppStart = function () {
+            // 先记录原始响应，再交给原函数处理
+            const Resp = BiLive_PlayWithMeJS.AppStartResponse;
+            const Lines = [];
+
+            if (!Resp) {
+                Lines.push("AppStartResponse 为空 —— 请求可能根本没发出去或被CORS拦截");
+                Lines.push("（如果是被CORS拦截，控制台会有一条跨域报错）");
+            } else {
+                Lines.push("code    : " + Resp.code);
+                Lines.push("message : " + Resp.message);
+                Lines.push("request_id: " + Resp.request_id);
+                Lines.push("");
+
+                if (Resp.code === 0) {
+                    Lines.push("结论：拿到了长链信息，弹幕可以正常读取！");
+                    Lines.push("auth_body 长度: " + String(Resp.data.websocket_info.auth_body).length);
+                    Lines.push("wss 节点数    : " + Resp.data.websocket_info.wss_link.length);
+                } else {
+                    Lines.push("结论：授权失败，看下面的错误码对照");
+                    Lines.push("");
+                    Lines.push("  4002 = HMAC签名无效（密钥错误或待签串有误）");
+                    Lines.push("  其他 = 见官方错误码表");
+                    Lines.push("");
+                    Lines.push("完整响应：");
+                    Lines.push(JSON.stringify(Resp, null, 2).slice(0, 1500));
+                }
+            }
+
+            ProbeLog.start = Lines.join("\n");
+            El("OutStart").textContent = ProbeLog.start;
+
+            // 交给SDK原本的逻辑，让它继续
+            try {
+                OrigAfter.apply(this, arguments);
+            } catch (E) {
+                PushErr("AfterAppStart 内部抛异常: " + E.message);
+            }
+        };
+
+        /* ---------- 一键复制 ---------- */
+        El("CopyBtn").addEventListener("click", () => {
+            const All = [
+                "======== 环境参数 ========",
+                ProbeLog.env || "(未采集)",
+                "",
+                "======== 本地存储 ========",
+                ProbeLog.storage || "(未采集)",
+                "",
+                "======== AppStart ========",
+                ProbeLog.start || "(未触发)",
+                "",
+                "======== 控制台错误 ========",
+                ProbeLog.err || "(无)"
+            ].join("\n");
+
+            // 直播姬里不一定能用剪贴板API，做失败兜底
+            const Fallback = () => {
+                const Ta = document.createElement("textarea");
+                Ta.value = All;
+                Ta.style.position = "fixed";
+                Ta.style.left = "-9999px";
+                document.body.appendChild(Ta);
+                Ta.select();
+                let Ok = false;
+                try { Ok = document.execCommand("copy"); } catch (E) { }
+                Ta.remove();
+                El("CopyBtn").textContent = Ok ? "已复制 ✓" : "复制失败，请手动选中";
+                setTimeout(() => { El("CopyBtn").textContent = "复制全部结果"; }, 2000);
+            };
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(All).then(() => {
+                    El("CopyBtn").textContent = "已复制 ✓";
+                    setTimeout(() => { El("CopyBtn").textContent = "复制全部结果"; }, 2000);
+                }).catch(Fallback);
+            } else {
+                Fallback();
+            }
+        });
+
+        /* ---------- 启动 ---------- */
+        CollectEnv();
+        CollectStorage();
+
+        // 配置：把你自己插件的 AppID 填这里
+        BiLive_PlayWithMeJS.AppID = 1792520717598;
+
+        // 故意把两个代签地址留空 —— 我们要观察的就是"没有代签时会怎样"
+        BiLive_PlayWithMeJS_Authorizer.SameOriginAuthorizerServer = "";
+        BiLive_PlayWithMeJS_Authorizer.JSONPAuthorizerServer = "";
+
+        // 不自动弹身份码窗：探针不接收手动输入，只观察平台下发了什么
+        // 如果URL里有CODE，Init会用它；没有的话我们记录后自己决定
+        const HasCode = new URLSearchParams(location.search).has("CODE");
+        if (HasCode) {
+            console.log("[探针] URL里有CODE，直接启动SDK");
+            BiLive_PlayWithMeJS.Init();
+        } else {
+            console.log("[探针] URL里没有CODE，跳过Init（避免弹身份码窗遮挡结果）");
+            El("OutStart").textContent =
+                "未调用 Init()\n\n原因：URL里没有 CODE 参数，也没有配置代签服务。\n" +
+                "这本身就说明了一件事：\n" +
+                "平台如果没有下发 CODESIGN，也没有下发 CODE，\n" +
+                "那么插件端拿不到任何可用于授权的凭据 —— 必须依赖外部代签。";
+            ProbeLog.start = El("OutStart").textContent;
+        }
+    </script>
+</body>
+
+</html>

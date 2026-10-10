@@ -185,6 +185,29 @@
             word-break: break-all;
         }
 
+        /* 摘要：视觉上要跳出来，因为它才是"结论" */
+        #DG_ProbeSummary {
+            margin: 0;
+            padding: 12px;
+            background: #FFF8E6;
+            border: 1px solid #FFD980;
+            border-left: 5px solid #FFB300;
+            border-radius: 6px;
+            font-family: Consolas, "Courier New", monospace;
+            font-size: 13px;
+            line-height: 1.7;
+            color: #6B4A00;
+            font-weight: 600;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        /* 完整探针：太长的部分自己滚动，不把页面撑得没边 */
+        #DG_Probe {
+            max-height: 220px;
+            overflow: auto;
+        }
+
         .DG_Hint {
             font-size: 12px;
             color: #999999;
@@ -392,6 +415,22 @@
             <a id="DG_BackLink" href="?" style="color:#FF6699">← 返回显示页</a>
         </div>
 
+        <!-- ============================================================
+             环境探针：放在最顶部
+             原因：直播姬的设置面板可视高度有限，放底部会被挤出视口，
+             必须滚动才能看到 —— 诊断信息"要滚动才看得见"等于看不见。
+             顶部还要显示一个精简摘要，不用滚动就有结论。
+             ============================================================ -->
+        <h3>环境探针（最关键的信息）</h3>
+        <pre id="DG_ProbeSummary">采集中…</pre>
+        <div class="DG_Row">
+            <button id="DG_ProbeBtn">重新检测</button>
+            <button id="DG_CopyProbe">复制全部结果</button>
+        </div>
+        <pre id="DG_Probe">采集中…</pre>
+
+        <h3>显示区设置</h3>
+
         <div class="DG_Row">
             <label for="DG_W">显示区宽度</label>
             <input id="DG_W" type="number" min="1" max="4096" step="1">
@@ -419,13 +458,6 @@
             宽高只用于预览与显示区自适应参考。实际画面尺寸由直播姬的插件窗口决定，
             建议让两者保持一致，以免文字被缩放导致发虚。
         </div>
-
-        <!-- 环境探针：把当前页面的真实参数打印出来，方便反馈给开发者 -->
-        <h3>环境探针</h3>
-        <div class="DG_Row">
-            <button id="DG_ProbeBtn">重新检测</button>
-        </div>
-        <pre id="DG_Probe"></pre>
     </div>
 
     <script>
@@ -661,6 +693,56 @@
             console.log("[点怪插件] [" + Tag + "] 环境探针\n" + DG_CollectProbe());
         }
 
+        /**
+         * 【摘要】只挑最关键的几行
+         * - 直播姬的设置面板可视高度有限，完整探针必须滚动才能看全
+         * - 摘要直接给出"有没有CODESIGN"这类结论，不用滚动就能判断
+         */
+        function DG_CollectProbeSummary() {
+            const Get = (K) => DG_UrlParams.get(K);
+            const Mark = (Ok) => Ok ? "✅ 有" : "❌ 没有";
+
+            const CodeSign = Get("CODESIGN");
+            const Code = Get("CODE");
+            const Lines = [];
+
+            Lines.push("运行模式 : " + (DG_IsSettingPage ? "设置页" : "显示页"));
+            Lines.push("iframe   : " + window.innerWidth + " × " + window.innerHeight);
+            Lines.push("参数个数 : " + [...DG_UrlParams].length);
+            Lines.push("");
+            Lines.push("CODESIGN : " + Mark(!!CodeSign) + "   ← 决定能否免身份码");
+            Lines.push("CODE     : " + Mark(!!Code));
+            Lines.push("MID      : " + Mark(!!Get("MID")));
+            Lines.push("plug_env : " + (Get("plug_env") ?? "(未传)"));
+
+            // 直接给结论，省得看的人自己推
+            Lines.push("");
+            if (CodeSign) {
+                Lines.push("结论：平台下发了 CODESIGN，");
+                Lines.push("      免身份码方案可行。");
+                Lines.push("      下一步看它能不能换到长链密钥。");
+            } else if (Code) {
+                Lines.push("结论：平台下发了 CODE（身份码），");
+                Lines.push("      本地自签路线可行，但需解决跨域。");
+            } else {
+                Lines.push("结论：平台没有下发任何授权凭据。");
+                Lines.push("      若确认在直播姬内打开，则说明");
+                Lines.push("      插件端拿不到凭据，必须外部代签。");
+            }
+
+            return Lines.join("\n");
+        }
+
+        /**
+         * 刷新探针显示（摘要 + 完整）
+         */
+        function DG_RefreshProbe() {
+            const Sum = document.getElementById("DG_ProbeSummary");
+            const Full = document.getElementById("DG_Probe");
+            if (Sum) Sum.textContent = DG_CollectProbeSummary();
+            if (Full) Full.textContent = DG_CollectProbe();
+        }
+
 
         /* ---------------------------------------------------------------------------
          * 【设置页】初始化表单
@@ -674,7 +756,6 @@
             const Wrap = document.getElementById("DG_PreviewWrap");
             const Status = document.getElementById("DG_Status");
             const BtnProbe = document.getElementById("DG_ProbeBtn");
-            const ProbeOut = document.getElementById("DG_Probe");
 
             // 回填当前值
             const Now = DG_LoadSize();
@@ -759,12 +840,47 @@
             // 重新检测探针
             if (BtnProbe) {
                 BtnProbe.addEventListener("click", () => {
-                    if (ProbeOut) ProbeOut.textContent = DG_CollectProbe();
+                    DG_RefreshProbe();
                 });
             }
 
-            // 首次填充
-            if (ProbeOut) ProbeOut.textContent = DG_CollectProbe();
+            // 复制探针结果：直播姬里不方便选中文字，一键复制最省事
+            const BtnCopy = document.getElementById("DG_CopyProbe");
+            if (BtnCopy) {
+                BtnCopy.addEventListener("click", () => {
+                    const Text = DG_CollectProbeSummary() + "\n\n" + DG_CollectProbe();
+
+                    const Done = (Ok) => {
+                        BtnCopy.textContent = Ok ? "已复制 ✓" : "复制失败，请手动选中";
+                        setTimeout(() => { BtnCopy.textContent = "复制全部结果"; }, 2000);
+                    };
+
+                    // 直播姬里剪贴板API不一定可用，准备兜底方案
+                    const Fallback = () => {
+                        const Ta = document.createElement("textarea");
+                        Ta.value = Text;
+                        Ta.style.position = "fixed";
+                        Ta.style.left = "-9999px";
+                        document.body.appendChild(Ta);
+                        Ta.select();
+                        let Ok = false;
+                        try { Ok = document.execCommand("copy"); } catch (E) { }
+                        Ta.remove();
+                        Done(Ok);
+                    };
+
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(Text)
+                            .then(() => Done(true))
+                            .catch(Fallback);
+                    } else {
+                        Fallback();
+                    }
+                });
+            }
+
+            // 首次填充（摘要 + 完整）
+            DG_RefreshProbe();
 
             // “返回显示页”要保留其他参数（比如CODE），但必须去掉plug_env
             // 否则回去还是设置页，等于绕圈

@@ -717,7 +717,7 @@
             //           这是给主播用的模式，不需要上架、不需要身份码
             //
             //   false → 只用 SDK（需要平台上架通道，或本地自签调试）
-            UseLocalBridge: true,
+            UseLocalBridge: false,
 
             // 本地服务地址。端口要和 本地程序.js 里的 CONFIG.Port 一致
             LocalBridgeUrl: "ws://127.0.0.1:8770",
@@ -774,7 +774,25 @@
 
             // 字号可调范围（px），防止设置页填出离谱数值
             FontSizeMin: 8,
-            FontSizeMax: 120
+            FontSizeMax: 120,
+
+            /* ---------- 内容暂存 ---------- */
+
+            // 是否把已显示的弹幕暂存起来，重新加载后恢复
+            //
+            // 为什么需要：
+            //   设置页和显示页是两个独立的页面实例。
+            //   从设置页点"返回显示页"其实是重新加载了一次页面，
+            //   DOM 里那些弹幕就全没了 —— 看起来像"内容被清空"。
+            //
+            // 用 sessionStorage 而不是 localStorage：
+            //   它能在"同一标签页内跳转/刷新"时保留，
+            //   但标签页关闭后自动清除，
+            //   不会像 localStorage 那样第二天还显示昨天的弹幕。
+            KeepOnReload: true,
+
+            // 最多暂存多少条（太多了恢复会慢，而且没必要）
+            KeepMax: 80
         };
 
 
@@ -1123,6 +1141,131 @@
 
 
         /* ---------------------------------------------------------------------------
+         * 【内容暂存】让"从设置页返回显示页"不丢内容
+         *
+         * 问题本质：
+         *   设置页与显示页是两个独立的页面实例，
+         *   "返回显示页" = 重新加载页面 = DOM 清空。
+         *   连按 F5 刷新也一样会丢。
+         *
+         * 方案：
+         *   把当前显示的弹幕/SC 存进 sessionStorage，
+         *   页面加载时恢复。
+         *
+         * 为什么用 sessionStorage 而不是 localStorage：
+         *   - sessionStorage 在同一标签页内跳转、刷新时保留
+         *   - 标签页关闭后自动清除，不会第二天还显示昨天的弹幕
+         *   - localStorage 会跨会话保留，那反而会造成"幽灵弹幕"
+         * -------------------------------------------------------------------------*/
+        const DG_KeepKey = "DG_Keep_V1";
+
+        /**
+         * 收集当前所有行，存进 sessionStorage
+         * - 只存渲染需要的最小字段，不存整个原始 JSON（省空间）
+         * - SC 与普通弹幕分开存，因为恢复时的插入方式不同
+         *   （SC 用 prepend，弹幕用 appendChild）
+         */
+        function DG_SaveKept() {
+            if (!DG_Config.KeepOnReload) return;
+
+            const Collect = (Zone, IsSC) => {
+                if (!Zone) return [];
+                // 取最后 KeepMax 条：太多没意义，而且恢复会变慢
+                const All = Array.from(Zone.querySelectorAll(".DG_Line"));
+                const Slice = All.slice(-DG_Config.KeepMax);
+
+                return Slice.map((Line) => {
+                    const TextEl = Line.querySelector(".DG_Text");
+                    return {
+                        // textContent 会带上内部 <br> 的换行，这里用 innerText 语义更接近；
+                        // 但恢复时我们只用纯文本再拆一次，所以 textContent 就够
+                        text: TextEl ? TextEl.textContent : "",
+                        uname: Line.dataset.uname || "",
+                        uid: Line.dataset.uid || "",
+                        isSC: !!IsSC,
+                        msgID: Line.dataset.msgId || "",
+                    };
+                });
+            };
+
+            const Payload = {
+                danmaku: Collect(DG_Dom.DmZone, false),
+                sc: Collect(DG_Dom.SCZone, true),
+            };
+
+            try {
+                sessionStorage.setItem(DG_KeepKey, JSON.stringify(Payload));
+            } catch (E) {
+                // 隐私模式或配额满时会抛异常，忽略即可：
+                // 丢的只是"刷新后恢复"这个便利，不影响正常出弹幕
+                console.warn("[点怪插件] 暂存内容失败（不影响使用）", E);
+            }
+        }
+
+        /**
+         * 从 sessionStorage 恢复内容
+         * @returns {number} 恢复了几条
+         */
+        function DG_RestoreKept() {
+            if (!DG_Config.KeepOnReload) return 0;
+
+            let Payload = null;
+            try {
+                const Raw = sessionStorage.getItem(DG_KeepKey);
+                if (!Raw) return 0;
+                Payload = JSON.parse(Raw);
+            } catch (E) {
+                return 0;
+            }
+            if (!Payload) return 0;
+
+            let Count = 0;
+
+            // 先恢复普通弹幕：它们是 appendChild，按原顺序依次追加即可。
+            // 序号沿用保存时的顺序，这样编号能和刷新前接上。
+            (Payload.danmaku || []).forEach((Item, Idx) => {
+                if (!Item || !Item.text) return;
+                const Line = DG_BuildLine({
+                    uid: Item.uid,
+                    uname: Item.uname,
+                    text: Item.text,
+                    isSC: false,
+                    msgID: Item.msgID,
+                    index: Idx,
+                });
+                DG_Dom.DmZone.appendChild(Line);
+                DG_DanmakuOrder.push(Line);
+                // 让后续新增的序号从这个位置continue，不会和恢复的重复
+                DG_TotalDanmaku = Math.max(DG_TotalDanmaku, Idx + 1);
+                Count += 1;
+            });
+
+            // 再恢复 SC：它们是 prepend，所以必须"倒着插"
+            // 才能让最终顺序和保存时一致
+            (Payload.sc || []).slice().reverse().forEach((Item) => {
+                if (!Item || !Item.text) return;
+                const Line = DG_BuildLine({
+                    uid: Item.uid,
+                    uname: Item.uname,
+                    text: Item.text,
+                    isSC: true,
+                    msgID: Item.msgID,
+                });
+                DG_Dom.SCZone.prepend(Line);
+                Count += 1;
+            });
+
+            if (Count > 0) {
+                // 有内容就把提示条收起来，否则会和恢复的弹幕叠在一起
+                if (DG_Dom.Tip) DG_Dom.Tip.style.display = "none";
+                console.log(`[点怪插件] 已恢复上次显示的 ${Count} 条内容（设置页往返/刷新不丢）`);
+            }
+
+            return Count;
+        }
+
+
+        /* ---------------------------------------------------------------------------
          * 【模式分流】按运行模式决定显示哪一个界面
          * - 设置页：显示设置表单，隐藏显示区，且绝不启动开平长链
          * - 显示页：显示渲染区，隐藏设置表单
@@ -1161,6 +1304,12 @@
 
                 // 启用关闭按钮的委托监听（只需挂一次，之后新加的行自动生效）
                 DG_BindCloseDelegation();
+
+                // 恢复上次显示的内容
+                // 必须在绑定监听之后、连数据源之前：
+                // 这样"从设置页返回"能立刻看到之前的弹幕，
+                // 而不是等新弹幕进来才有内容
+                DG_RestoreKept();
 
                 DG_LogProbe("显示页");
             }
@@ -1535,10 +1684,17 @@
             // 3) 从DOM移除
             if (Fade === false) {
                 Line.remove();
+                // 删除后立刻暂存，避免"删了又回来"
+                DG_SaveKept();
             } else {
                 // 复用SC撤回的淡出动画
                 Line.classList.add("DG_Removing");
-                setTimeout(() => Line.remove(), 300);
+                setTimeout(() => {
+                    Line.remove();
+                    // 动画结束、元素真正移除后再暂存，
+                    // 否则会把还在淡出的行也算进去
+                    DG_SaveKept();
+                }, 300);
             }
         }
 
@@ -1607,6 +1763,8 @@
             if (Opt.msgID) Line.dataset.msgId = Opt.msgID;
             // 昵称额外存一份到dataset，方便以后做筛选/统计
             Line.dataset.uname = Opt.uname || "";
+            // uid 也存一份：内容暂存恢复时需要它
+            Line.dataset.uid = Opt.uid === undefined || Opt.uid === null ? "" : String(Opt.uid);
 
             // 序号（可选）：只有开启 DG_Config.ShowIndex 时才加
             // 放在最前面，形成"1. 正文"的编号列表观感
@@ -1695,9 +1853,11 @@
             // 出现第一条内容后把提示收起来
             if (DG_Dom.Tip) DG_Dom.Tip.style.display = "none";
 
-            // 这里原本有一句 DG_AutoScroll()，现在已经不需要了：
-            // #DG_DmZone 用了 column-reverse，容器天然停在视觉底部，
-            // 新行总是可见的，不需要任何JS干预。
+            // 不需要手动滚动了：弹幕区是 flex 纵向布局 + overflow:hidden，
+            // 新行追加在末尾，溢出部分自然被裁在下方
+
+            // 内容变了就暂存一次，这样从设置页返回时能恢复
+            DG_SaveKept();
         }
 
 
@@ -1732,6 +1892,9 @@
             }
 
             if (DG_Dom.Tip) DG_Dom.Tip.style.display = "none";
+
+            // SC 加入后同样暂存
+            DG_SaveKept();
         }
 
 

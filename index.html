@@ -31,6 +31,11 @@
             user-select: none;
             -webkit-user-select: none;
             font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
+            /* 高度链必须完整：html 和 body 都要有确定高度，
+               下面的 #DG_Root height:100% 才有参照物。
+               否则百分比高度会退化成 auto，#DG_DmZone 的 overflow:hidden
+               就会失效（高度不定时 overflow 不生效），弹幕区又会无限长高。 */
+            height: 100%;
         }
 
         /* 调试时可把 background 改成 #0008 看看区域范围 */
@@ -45,6 +50,36 @@
             flex-direction: column;
             gap: 8px;
             overflow: hidden;
+            /* 字号变量：设置页保存后由JS覆盖。
+               放在这里当默认值，即使JS没跑也有合理字号。 */
+            --dg-font-size: 22px;
+        }
+
+        /* ================= 面板外框（DG_Config.ShowPanel 控制） ================= */
+        /* 效果：整个列表外围一圈绿框 + 圆角 + 半透明暗底
+           注意：颜色、粗细、圆角、底色全部由JS从 DG_Config 读取后写进行内样式，
+           所以这里只放"不随配置变化"的部分。
+           这样做的好处是改颜色不用碰CSS，改一个配置值就行 */
+        #DG_Root.DG_Panel {
+            /* 内边距要略大，否则内容贴着边框不好看 */
+            padding: 14px 18px;
+        }
+
+        /* 面板标题：默认不显示，DG_Config.PanelTitle 非空时由JS填字并显示 */
+        #DG_PanelTitle {
+            display: none;
+            flex: 0 0 auto;
+            color: #FFFFFF;
+            font-size: .95em;
+            font-weight: 700;
+            letter-spacing: .04em;
+            padding-bottom: 8px;
+            margin-bottom: 2px;
+            border-bottom: 1px dashed rgba(255, 255, 255, .18);
+            text-shadow:
+                0 0 2px #000,
+                1px 1px 0 #000,
+                -1px -1px 0 #000;
         }
 
         /* ================= 设置页（plug_env=1） ================= */
@@ -214,19 +249,121 @@
             line-height: 1.6;
         }
 
+        /* ================= 显示区尺寸控制 ================= */
+        /* 设置页保存了尺寸时，用 DG_Sized 类让 #DG_Root 按固定像素渲染；
+           没保存过则不加这个类，#DG_Root 保持 width/height:100% 自适应。
+
+           为什么要居中：
+             直播姬里浏览器素材的宽高是独立的，可能比设置值大。
+             不居中的话，内容会缩在左上角，看起来像"坏了"。
+             居中后视觉上是"居中的面板"，像是有意为之。 */
+        body.DG_Centered {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #DG_Root.DG_Sized {
+            /* 尺寸由JS按保存值写入行内样式，这里只负责取消自适应 */
+            width: auto;
+            height: auto;
+            flex: 0 0 auto;
+        }
+
+        /* ================= 设置页里的折叠块 ================= */
+
+        /* 用于把"预览"和"环境探针"收起来，避免挤占表单的可见空间 */
+        #DG_Settings details {
+            border: 1px solid #E3E3E3;
+            border-radius: 6px;
+            background: #FAFAFA;
+            padding: 0 10px;
+        }
+
+        #DG_Settings summary {
+            cursor: pointer;
+            padding: 10px 0;
+            font-size: 13px;
+            color: #666666;
+            user-select: none;
+            outline: none;
+            /* 去掉浏览器默认的三角，自己加一个，位置更可控 */
+            list-style: none;
+        }
+
+        #DG_Settings summary::-webkit-details-marker {
+            display: none;
+        }
+
+        #DG_Settings summary::before {
+            content: "▸ ";
+            color: #FF6699;
+            font-weight: 700;
+        }
+
+        /* 展开状态换一个朝下的箭头 */
+        #DG_Settings details[open] summary::before {
+            content: "▾ ";
+        }
+
+        #DG_Settings details[open] summary {
+            border-bottom: 1px solid #E3E3E3;
+            margin-bottom: 10px;
+        }
+
+        /* 折叠块里的内容底部留点空，别贴着边框 */
+        #DG_Settings details>*:last-child {
+            margin-bottom: 10px;
+        }
+
         /* ================= 顶部堆叠区：只放“点怪”开头的SC ================= */
         /* 新SC插到最前面，于是最新的永远在最上面 */
+        /*
+         * 空间分配策略：SC区优先，弹幕区分剩余高度
+         *
+         * flex: 0 0 auto  = 不伸不长，只按内容自然高度占位
+         *   → SC有几条就占多高，不会被弹幕区抢走空间
+         * max-height      = 安全阀，由JS按 DG_Config.ScZoneMaxPercent 写入
+         *   → 没有它的话，SC太多会把弹幕区挤成0高度，就变成"弹幕全看不见"了
+         * min-height: 0   = 允许收缩（配合 overflow 才能裁剪）
+         * overflow:hidden = 裁掉最底部那些"最旧的SC"
+         */
         #DG_SCZone {
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            /* em：字号变大时SC之间的间距也跟着变大，比例保持一致 */
+            gap: .3em;
+            flex: 0 0 auto;
+            min-height: 0;
+            overflow: hidden;
         }
 
-        /* ================= 下方滚动区：普通“点怪”弹幕逐行 ================= */
+        /* ================= 下方弹幕区 ================= */
+        /* 从上往下排：DOM 顺序 = 视觉顺序，新的追加在下面
+         *
+         * 1) flex:1 1 auto + min-height
+         *    吃掉SC区之外的剩余高度。SC区优先占位，这里分剩下的。
+         *    min-height 由JS按 DG_Config.DanmakuMinHeight 写入，
+         *    作为"保底"：万一SC特别多，也不会把弹幕区压成0高度。
+         *    （flex项默认 min-height:auto 会被内容撑开，
+         *      所以必须显式给一个值，overflow 才会生效）
+         *
+         * 2) overflow: hidden
+         *    关键：溢出的行【保留在DOM里，只是不显示】。
+         *    删掉上方的某行后，下面的行会自动往上补位 —— 这是
+         *    文档流的天然行为，不需要任何JS干预。
+         *
+         *    （之前用的是 column-reverse + 自动淘汰旧行，
+         *      那样新行贴底、旧行被真删掉，与这里的要求相反）
+         */
         #DG_DmZone {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            /* 行距由 .DG_Line 的上下padding撑开，这里用0更紧凑 */
+            gap: 0;
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: hidden;
         }
 
         .DG_Line {
@@ -234,15 +371,24 @@
             align-items: baseline;
             gap: .5em;
             line-height: 1.45;
-            font-size: 22px;
+            /* 字号由CSS变量控制，设置页可以改。
+               默认值写在 #DG_Root 上，这里只负责引用 ——
+               这样JS改一处变量，所有行一起变。 */
+            font-size: var(--dg-font-size, 22px);
             color: #FFFFFF;
 
-            /* SC 与普通弹幕外观完全一致，只有文本颜色不同。
-               统一加一层半透明黑底：纯红纯绿文字直接压在任意画面上，
-               遇到亮背景会糊成一片，垫个底才保证两种颜色都读得清 */
-            background: rgba(0, 0, 0, .35);
-            border-radius: 6px;
-            padding: 2px 8px;
+            /* ---- 行左侧竖线：默认关闭，由 DG_Config.RowLeftBar 控制 ---- */
+            /* 你要的是"整个列表一圈框"，所以这个默认不开。
+               开启时由JS加 .DG_LeftBar 类，样式在下面定义 */
+            padding-left: 4px;
+            /* 上下留白用 em 而不是 px：字号调大时行距跟着变大，
+               否则字变大了行还挤在一起 */
+            padding-top: .28em;
+            padding-bottom: .28em;
+
+            /* 不再用整行黑底：列表风格本身就是"轻量"的，
+               加背景块会显得笨重。文字靠 text-shadow 保证可读性 */
+            background: transparent;
 
             /* 保证在任何画面上都看得清（OBS必备） */
             text-shadow:
@@ -257,6 +403,12 @@
             word-break: break-word;
             overflow-wrap: anywhere;
             animation: DG_In .18s ease-out;
+        }
+
+        /* 可选的"每行左侧竖线"（DG_Config.RowLeftBar = true 时由JS加上） */
+        .DG_Line.DG_LeftBar {
+            border-left: 3px solid #4CE86B;
+            padding-left: 10px;
         }
 
         /* 高亮闪烁一下，方便主播一眼看到新的一条 */
@@ -287,25 +439,27 @@
         /* ================= 每行的关闭按钮 ================= */
         /* 平常完全隐藏、不占位；鼠标移到这一行上才出现 */
         /* 给右侧预留位置，避免按钮浮在文字上面 */
+        /* 用 em 而不是 px：字号调大时按钮和预留空间一起变大，
+           否则字号大了按钮会显得很小、还容易被文字压住 */
         .DG_Line {
             position: relative;
-            padding-right: 26px;
+            padding-right: 1.2em;
         }
 
         .DG_Close {
             position: absolute;
-            right: 2px;
+            right: .1em;
             top: 50%;
             transform: translateY(-50%);
-            width: 20px;
-            height: 20px;
-            line-height: 18px;
+            width: .92em;
+            height: .92em;
+            line-height: .84em;
             text-align: center;
             border-radius: 50%;
             background: rgba(0, 0, 0, .55);
             border: 1px solid rgba(255, 255, 255, .55);
             color: #FFFFFF;
-            font-size: 14px;
+            font-size: .64em;
             font-weight: 700;
             cursor: pointer;
             /* 关键：默认不可见也不吃鼠标事件，免得它在行尾挡住别的东西 */
@@ -335,6 +489,17 @@
             font-weight: 700;
             font-size: .82em;
             letter-spacing: .02em;
+        }
+
+        /* 序号：参考"弹幕列表"样式的 1. 2. 3. */
+        /* 固定宽度 + 右对齐，这样数字位数不同也能对齐成一列 */
+        .DG_Index {
+            flex: 0 0 auto;
+            width: 1.8em;
+            text-align: right;
+            color: #FFFFFF;
+            font-weight: 700;
+            opacity: .75;
         }
 
         /* 分隔符 */
@@ -396,6 +561,8 @@
 
     <!-- ============ 显示页（plug_env=0）：正常渲染弹幕 ============ -->
     <div id="DG_Root">
+        <!-- 面板标题：默认隐藏，DG_Config.PanelTitle 非空时才显示 -->
+        <div id="DG_PanelTitle"></div>
         <!-- 顶部：点怪SC堆叠区，新的插在最上面 -->
         <div id="DG_SCZone"></div>
         <!-- 下方：点怪弹幕逐行显示区 -->
@@ -416,20 +583,11 @@
         </div>
 
         <!-- ============================================================
-             环境探针：放在最顶部
-             原因：直播姬的设置面板可视高度有限，放底部会被挤出视口，
-             必须滚动才能看到 —— 诊断信息"要滚动才看得见"等于看不见。
-             顶部还要显示一个精简摘要，不用滚动就有结论。
+             布局原则：主播要用的东西放最上面且一直可见。
+             探针是给开发者排查问题用的，必须折叠起来 ——
+             否则它会把真正要填的输入框挤出视口，
+             变成"打开设置页却找不到能改的地方"。
              ============================================================ -->
-        <h3>环境探针（最关键的信息）</h3>
-        <pre id="DG_ProbeSummary">采集中…</pre>
-        <div class="DG_Row">
-            <button id="DG_ProbeBtn">重新检测</button>
-            <button id="DG_CopyProbe">复制全部结果</button>
-        </div>
-        <pre id="DG_Probe">采集中…</pre>
-
-        <h3>显示区设置</h3>
 
         <div class="DG_Row">
             <label for="DG_W">显示区宽度</label>
@@ -444,20 +602,46 @@
         </div>
 
         <div class="DG_Row">
+            <label for="DG_Font">字体大小</label>
+            <input id="DG_Font" type="number" min="8" max="120" step="1">
+            <span>px</span>
+        </div>
+
+        <div class="DG_Row">
             <button id="DG_Save" class="DG_Primary">保存设置</button>
             <button id="DG_Reset">恢复默认</button>
         </div>
 
         <div id="DG_Status"></div>
 
-        <div id="DG_PreviewWrap">
-            <div id="DG_Preview">预览</div>
+        <div class="DG_Hint">
+            <b>这里设的尺寸会和直播姬里素材的宽高共同决定最终效果。</b><br>
+            插件无法改变直播姬给你的窗口大小（那是宿主决定的），
+            它只能决定"内容占多大"。所以：<br>
+            · 建议把这个值填成<b>和浏览器素材的宽高一致</b>，这样正好铺满<br>
+            · 如果素材比这里大，内容会居中显示，四周留白<br>
+            · 如果素材比这里小，超出部分会被裁掉<br>
+            改完后需要<b>刷新显示页</b>（重启素材源或重新添加）才会生效。
         </div>
 
-        <div class="DG_Hint">
-            宽高只用于预览与显示区自适应参考。实际画面尺寸由直播姬的插件窗口决定，
-            建议让两者保持一致，以免文字被缩放导致发虚。
-        </div>
+        <!-- 预览：折叠。想确认比例时展开看一眼即可 -->
+        <details>
+            <summary>显示区比例预览</summary>
+            <div id="DG_PreviewWrap" style="margin-top:10px">
+                <div id="DG_Preview">预览</div>
+            </div>
+        </details>
+
+        <!-- 环境探针：折叠。给开发者排查用，主播不需要关心 -->
+        <details>
+            <summary>环境探针（排查问题时才需要）</summary>
+            <pre id="DG_ProbeSummary" style="margin-top:10px">采集中…</pre>
+            <div class="DG_Row">
+                <button id="DG_ProbeBtn">重新检测</button>
+                <button id="DG_CopyProbe">复制全部结果</button>
+            </div>
+            <pre id="DG_Probe">采集中…</pre>
+        </details>
     </div>
 
     <script>
@@ -503,15 +687,94 @@
             //   true  → “12345 - 点怪 打个大怪”
             //   false → “12345 - 打个大怪”      （正文为空时仍会显示“点怪”）
             KeepPrefix: false,
-            // 普通弹幕最多保留多少行，超出丢弃最旧的
-            MaxDanmaku: 100,
-            // SC最多保留多少行
+            // 普通弹幕在DOM里的保留上限
+            // - 溢出的行是【保留但不显示】（靠CSS裁剪），不是被删掉
+            // - 这个值只是个"安全阀"，防止直播几小时后DOM积累过多导致卡顿
+            // - 设得足够大，正常一场直播根本碰不到；碰到时丢的是最旧的
+            MaxDanmaku: 2000,
+            // SC最多保留多少行（DOM里的上限，防止无限堆积）
             MaxSC: 20,
+
+            /* ---------- 空间分配（SC区优先，弹幕区分剩余） ---------- */
+
+            // SC区最多占整个显示区高度的百分比
+            // - SC区是"按内容自然高度占位"，这个值只是安全阀
+            // - 没有它的话，SC太多会把弹幕区挤成0高度，弹幕就全看不见了
+            // - 100 = 完全不限制（不推荐）
+            ScZoneMaxPercent: 70,
+
+            // 弹幕区的保底高度（px）
+            // - 即使SC区占满，也至少留这么高给弹幕
+            // - 设 0 表示不保底，也就是严格"SC优先"
+            DanmakuMinHeight: 80,
+
+            /* ---------- 数据来源 ---------- */
+
+            // 是否启用"本地弹幕服务"模式
+            //
+            //   true  → 优先从本地服务取弹幕（本地程序.js 提供的 WebSocket）
+            //           本地服务没开时，会自动回退到 SDK 直连
+            //           这是给主播用的模式，不需要上架、不需要身份码
+            //
+            //   false → 只用 SDK（需要平台上架通道，或本地自签调试）
+            UseLocalBridge: true,
+
+            // 本地服务地址。端口要和 本地程序.js 里的 CONFIG.Port 一致
+            LocalBridgeUrl: "ws://127.0.0.1:8770",
+
+            // 本地服务的连接重试间隔（毫秒）
+            LocalBridgeRetryMs: 3000,
             // 同一秒内同一个人发的一模一样的内容，算重复，直接忽略
             // 弹幕重连时偶尔会重放，开平长链没有原生去重
             DuplicateWindowMs: 1000,
             // 消息正文里如果出现分号或竖线，是否拆成多行显示
-            SplitMultiLine: false
+            SplitMultiLine: false,
+
+            /* ---------- 面板外观 ---------- */
+
+            // 是否给整个显示区套一层"面板"外框
+            //   true  → 整个列表外围一圈边框 + 圆角（截图里的绿框效果，默认）
+            //   false → 完全没有外框，文字直接飘在画面上
+            ShowPanel: true,
+
+            // 面板边框颜色。这就是"外围那一圈框"的颜色
+            PanelBorderColor: "#4CE86B",
+
+            // 面板底色
+            //   想要"框里带一层暗底"就填 rgba(0,0,0,.45)
+            //   只想要一个空心框、不遮挡画面 → transparent
+            PanelBg: "rgba(0, 0, 0, .30)",
+
+            // 边框粗细（px）
+            PanelBorderWidth: 2,
+
+            // 圆角（px）
+            PanelRadius: 10,
+
+            // 是否给每行左侧也加一条绿色竖线
+            //   false → 只有外围一圈框（默认，就是你要的效果）
+            //   true  → 框内每行还有自己的竖线（两层线条，比较花）
+            RowLeftBar: false,
+
+            // 面板顶部标题。留空 = 不显示标题栏
+            // 例："点怪弹幕"
+            PanelTitle: "",
+
+            // 是否在每行前面显示序号（1. 2. 3. …）
+            //   false → 显示"文本 - 昵称"（默认）
+            //   true  → 显示"序号 文本"，类似编号列表
+            ShowIndex: false,
+
+            /* ---------- 字号 ---------- */
+
+            // 默认字号（px）
+            // - 设置页保存过之后会以保存值为准，这里只是初始默认
+            // - 18~26 是比较常用的范围；太小看不清，太大会被裁行
+            FontSize: 22,
+
+            // 字号可调范围（px），防止设置页填出离谱数值
+            FontSizeMin: 8,
+            FontSizeMax: 120
         };
 
 
@@ -537,6 +800,29 @@
             const Num = Math.floor(Number(Value));
             if (!isFinite(Num)) return Fallback;
             return Math.min(DG_SizeMax, Math.max(DG_SizeMin, Num));
+        }
+
+        /**
+         * 是否"明确保存过"尺寸
+         *
+         * 这个判断很关键：
+         *   - 保存过  → 显示页按保存的像素尺寸渲染（设置真正生效）
+         *   - 没保存过 → 显示页保持 100% 自适应，填满直播姬给的窗口
+         *
+         * 如果不区分，所有人一打开就被强制成 480×720，
+         * 窗口更大时会白白留白一圈。
+         */
+        function DG_HasSavedSize() {
+            // URL 显式带了尺寸也算"明确指定"
+            const UrlW = DG_UrlParams.get("width") ?? DG_UrlParams.get("W");
+            const UrlH = DG_UrlParams.get("height") ?? DG_UrlParams.get("H");
+            if (UrlW !== null && UrlH !== null) return true;
+
+            try {
+                return localStorage.getItem(DG_SizeKey) !== null;
+            } catch (E) {
+                return false;
+            }
         }
 
         /**
@@ -606,6 +892,74 @@
 
 
         /* ---------------------------------------------------------------------------
+         * 【字号】跨页共享
+         * - 和尺寸一样，靠 localStorage 在设置页与显示页之间传递
+         * - 单独一个key，这样"恢复默认"可以分别重置
+         * -------------------------------------------------------------------------*/
+        const DG_FontKey = "DG_Font_V1";
+
+        /**
+         * 夹紧字号
+         */
+        function DG_ClampFont(Value, Fallback) {
+            const Num = Math.floor(Number(Value));
+            if (!isFinite(Num)) return Fallback;
+            return Math.min(DG_Config.FontSizeMax,
+                Math.max(DG_Config.FontSizeMin, Num));
+        }
+
+        /**
+         * 是否明确保存过字号
+         * - 没保存过就用 DG_Config.FontSize 作为默认
+         */
+        function DG_HasSavedFont() {
+            try {
+                return localStorage.getItem(DG_FontKey) !== null;
+            } catch (E) {
+                return false;
+            }
+        }
+
+        /**
+         * 读取字号
+         * @returns {{Size:number, From:string}}
+         */
+        function DG_LoadFont() {
+            const Fallback = DG_ClampFont(DG_Config.FontSize, 22);
+            try {
+                const Raw = localStorage.getItem(DG_FontKey);
+                if (Raw !== null) {
+                    return { Size: DG_ClampFont(Raw, Fallback), From: "localStorage" };
+                }
+            } catch (E) { }
+            return { Size: Fallback, From: "配置默认值" };
+        }
+
+        /**
+         * 保存字号
+         */
+        function DG_SaveFont(Size) {
+            try {
+                localStorage.setItem(DG_FontKey,
+                    String(DG_ClampFont(Size, DG_Config.FontSize)));
+                return true;
+            } catch (E) {
+                console.warn("[点怪插件] 保存字号失败", E);
+                return false;
+            }
+        }
+
+        function DG_ClearFont() {
+            try {
+                localStorage.removeItem(DG_FontKey);
+                return true;
+            } catch (E) {
+                return false;
+            }
+        }
+
+
+        /* ---------------------------------------------------------------------------
          * 【DOM】一次取好，别每次事件都查DOM
          * -------------------------------------------------------------------------*/
         const DG_Dom = {
@@ -617,6 +971,155 @@
 
         // 普通弹幕是否发生了溢出，需要一个数组记住顺序
         const DG_DanmakuOrder = [];
+
+        // 累计收到的"点怪"弹幕条数，用作序号来源
+        // 注意它只增不减：删掉中间某行后，后面行的编号不会重排
+        let DG_TotalDanmaku = 0;
+
+
+        /**
+         * 把设置页保存的宽高应用到显示页
+         *
+         * 行为：
+         *   保存过尺寸 → #DG_Root 按固定像素渲染，并在窗口里居中
+         *   没保存过   → 保持 100% 自适应，填满直播姬给的窗口
+         *
+         * 注意：这里改变的是"内容占多大"，不是"窗口多大"。
+         * 直播姬里浏览器素材的宽高由宿主决定，页面无权修改。
+         * 所以设置值最好和素材宽高填成一致，否则周围会留白。
+         */
+        function DG_ApplySizeControl() {
+            const Root = document.getElementById("DG_Root");
+            if (!Root) return;
+
+            if (!DG_HasSavedSize()) {
+                // 没保存过：保持自适应
+                Root.classList.remove("DG_Sized");
+                Root.style.width = "";
+                Root.style.height = "";
+                document.body.classList.remove("DG_Centered");
+                return;
+            }
+
+            const Size = DG_LoadSize();
+            Root.classList.add("DG_Sized");
+            Root.style.width = Size.W + "px";
+            Root.style.height = Size.H + "px";
+
+            // 居中的意义：窗口比设置值大时，内容不会缩在左上角
+            document.body.classList.add("DG_Centered");
+
+            console.log(`[点怪插件] 显示区按设置渲染: ${Size.W} × ${Size.H}（来源：${Size.From}）`);
+        }
+
+
+        /**
+         * 把设置页保存的字号应用到显示页
+         *
+         * 实现方式：写 CSS 变量 --dg-font-size。
+         * 为什么用变量而不是直接改 .DG_Line 的 font-size：
+         *   行内的 padding、关闭按钮尺寸、SC间距都用了 em，
+         *   它们会自动跟着根字号缩放。改一处变量，整块面板比例一起变。
+         */
+        function DG_ApplyFontSize() {
+            const Root = document.getElementById("DG_Root");
+            if (!Root) return;
+
+            const Font = DG_LoadFont();
+            Root.style.setProperty("--dg-font-size", Font.Size + "px");
+
+            console.log(`[点怪插件] 字号: ${Font.Size}px（来源：${Font.From}）`);
+        }
+
+
+        /* ---------------------------------------------------------------------------
+         * 【面板外观】按 DG_Config 决定外框、标题、行左侧竖线
+         * - 颜色/粗细/圆角/底色都从配置读，写进行内样式
+         *   这样改配色不用碰CSS，也不用担心CSS里写死后忘记同步
+         * -------------------------------------------------------------------------*/
+        function DG_ApplyPanelStyle() {
+            const Root = document.getElementById("DG_Root");
+            const Title = document.getElementById("DG_PanelTitle");
+            if (!Root) return;
+
+            // ---------- 外框 ----------
+            if (DG_Config.ShowPanel) {
+                Root.classList.add("DG_Panel");
+                // 行内样式优先级高于CSS类，所以配置值总是说了算
+                Root.style.background = DG_Config.PanelBg;
+                Root.style.border =
+                    DG_Config.PanelBorderWidth + "px solid " + DG_Config.PanelBorderColor;
+                Root.style.borderRadius = DG_Config.PanelRadius + "px";
+            } else {
+                Root.classList.remove("DG_Panel");
+                // 必须显式清掉，否则关掉开关后旧的行内样式还留着
+                Root.style.background = "";
+                Root.style.border = "";
+                Root.style.borderRadius = "";
+            }
+
+            // ---------- 标题 ----------
+            if (Title) {
+                const Text = (DG_Config.PanelTitle || "").trim();
+                if (Text.length > 0) {
+                    Title.textContent = Text;
+                    Title.style.display = "";
+                } else {
+                    Title.style.display = "none";
+                }
+            }
+
+            // ---------- 每行左侧竖线 ----------
+            DG_ApplyLeftBar();
+
+            // ---------- 空间分配：SC区优先，弹幕区分剩余 ----------
+            DG_ApplyZoneSizing();
+        }
+
+        /**
+         * 空间分配策略：SC区优先占位，弹幕区分剩余高度
+         *
+         * - SC区：flex:0 0 auto 让它按内容自然高度占位（CSS里已定），
+         *   这里只写一个 max-height 安全阀，防止它把弹幕区挤没
+         * - 弹幕区：flex:1 1 auto 吃剩余（CSS里已定），
+         *   这里写一个 min-height 保底
+         *
+         * 用百分比而不是像素给SC区，是为了跟随直播姬的框高自适应：
+         * 框高600和框高1080，70%对应的实际像素是不同的，这样两种尺寸都合理
+         */
+        function DG_ApplyZoneSizing() {
+            if (DG_Dom.SCZone) {
+                const Pct = Number(DG_Config.ScZoneMaxPercent);
+                if (isFinite(Pct) && Pct > 0 && Pct < 100) {
+                    DG_Dom.SCZone.style.maxHeight = Pct + "%";
+                } else {
+                    // 100 或非法值 = 不限制
+                    DG_Dom.SCZone.style.maxHeight = "none";
+                }
+            }
+
+            if (DG_Dom.DmZone) {
+                const Min = Number(DG_Config.DanmakuMinHeight);
+                DG_Dom.DmZone.style.minHeight =
+                    (isFinite(Min) && Min > 0 ? Min : 0) + "px";
+            }
+        }
+
+        /**
+         * 给已存在的每一行加上/去掉左侧竖线
+         * - 新增的行在 DG_BuildLine 里处理
+         * - 这个函数负责"开关改了之后，把已有的行也同步过来"
+         * - 左右两个区都要扫：SC 区和弹幕区
+         */
+        function DG_ApplyLeftBar() {
+            const On = !!DG_Config.RowLeftBar;
+            [DG_Dom.SCZone, DG_Dom.DmZone].forEach((Zone) => {
+                if (!Zone) return;
+                Zone.querySelectorAll(".DG_Line").forEach((Line) => {
+                    Line.classList.toggle("DG_LeftBar", On);
+                });
+            });
+        }
 
 
         /* ---------------------------------------------------------------------------
@@ -646,6 +1149,15 @@
                     Kept.set("plug_env", "1");
                     Entry.href = "?" + Kept.toString();
                 }
+
+                // 应用设置页保存的宽高（保存过才生效，否则保持自适应）
+                DG_ApplySizeControl();
+
+                // 应用设置页保存的字号
+                DG_ApplyFontSize();
+
+                // 应用面板外观（外框 / 标题）
+                DG_ApplyPanelStyle();
 
                 // 启用关闭按钮的委托监听（只需挂一次，之后新加的行自动生效）
                 DG_BindCloseDelegation();
@@ -750,6 +1262,7 @@
         function DG_InitSettingsPage() {
             const IptW = document.getElementById("DG_W");
             const IptH = document.getElementById("DG_H");
+            const IptFont = document.getElementById("DG_Font");
             const BtnSave = document.getElementById("DG_Save");
             const BtnReset = document.getElementById("DG_Reset");
             const Box = document.getElementById("DG_Preview");
@@ -761,6 +1274,7 @@
             const Now = DG_LoadSize();
             if (IptW) IptW.value = Now.W;
             if (IptH) IptH.value = Now.H;
+            if (IptFont) IptFont.value = DG_LoadFont().Size;
 
             /**
              * 状态提示
@@ -772,13 +1286,18 @@
             }
 
             /**
-             * 显示当前生效值以及它的来源
+             * 显示当前生效值以及它们的来源
              * - 来源很重要：能一眼看出是读了URL参数、本地存储，还是用了默认值
              * - 如果显示“默认值”而你以为存过了，说明localStorage没写进去
+             * @param {string} [Extra] 追加一句提示（例如"刷新后生效"）
              */
-            function ShowCurrent() {
+            function ShowCurrent(Extra) {
                 const Cur = DG_LoadSize();
-                SetStatus("当前生效：" + Cur.W + " × " + Cur.H + "（来源：" + Cur.From + "）", false);
+                const Font = DG_LoadFont();
+                let Text = "当前生效：" + Cur.W + " × " + Cur.H +
+                    "，字号 " + Font.Size + "px";
+                if (Extra) Text += "  " + Extra;
+                SetStatus(Text, false);
             }
 
             /**
@@ -790,6 +1309,7 @@
 
                 const W = DG_ClampSize(IptW && IptW.value, DG_DefaultSize.W);
                 const H = DG_ClampSize(IptH && IptH.value, DG_DefaultSize.H);
+                const F = DG_ClampFont(IptFont && IptFont.value, DG_Config.FontSize);
 
                 // 留出边框和内边距的余量
                 const AvailW = Math.max(20, Wrap.clientWidth - 20);
@@ -800,7 +1320,12 @@
 
                 Box.style.width = Math.max(16, Math.round(W * Scale)) + "px";
                 Box.style.height = Math.max(16, Math.round(H * Scale)) + "px";
-                Box.textContent = W + " × " + H;
+
+                // 预览里的字也按同样比例缩放，这样能直接看出
+                // "这个字号在这么大的面板里能放几行"
+                Box.style.fontSize = Math.max(8, Math.round(F * Scale)) + "px";
+
+                Box.textContent = W + " × " + H + " / " + F + "px";
             }
 
             // 输入时实时预览
@@ -812,13 +1337,19 @@
                 BtnSave.addEventListener("click", () => {
                     const W = DG_ClampSize(IptW && IptW.value, DG_DefaultSize.W);
                     const H = DG_ClampSize(IptH && IptH.value, DG_DefaultSize.H);
+                    const F = DG_ClampFont(IptFont && IptFont.value, DG_Config.FontSize);
 
                     // 夹紧后把实际生效的值写回输入框，避免显示值与存的值不一致
                     if (IptW) IptW.value = W;
                     if (IptH) IptH.value = H;
+                    if (IptFont) IptFont.value = F;
 
-                    if (DG_SaveSize(W, H)) {
-                        ShowCurrent();
+                    // 尺寸和字号都存；只要有一个成功就算成功
+                    const OkSize = DG_SaveSize(W, H);
+                    const OkFont = DG_SaveFont(F);
+
+                    if (OkSize || OkFont) {
+                        ShowCurrent("—— 刷新显示页后生效（插件无法实时改变直播姬的窗口大小）");
                     } else {
                         SetStatus("保存失败：浏览器禁用了本地存储，设置无法持久化", true);
                     }
@@ -830,12 +1361,17 @@
             if (BtnReset) {
                 BtnReset.addEventListener("click", () => {
                     DG_ClearSize();
+                    DG_ClearFont();
                     if (IptW) IptW.value = DG_DefaultSize.W;
                     if (IptH) IptH.value = DG_DefaultSize.H;
+                    if (IptFont) IptFont.value = DG_ClampFont(DG_Config.FontSize, 22);
                     ShowCurrent();
                     Redraw();
                 });
             }
+
+            // 字号改动时同步更新预览方块里的字，所见即所得
+            if (IptFont) IptFont.addEventListener("input", () => Redraw());
 
             // 重新检测探针
             if (BtnProbe) {
@@ -1066,9 +1602,20 @@
         function DG_BuildLine(Opt) {
             const Line = document.createElement("div");
             Line.className = "DG_Line" + (Opt.isSC ? " DG_SC" : "");
+            // 行左侧竖线是可选的，构建时按当前配置决定
+            if (DG_Config.RowLeftBar) Line.classList.add("DG_LeftBar");
             if (Opt.msgID) Line.dataset.msgId = Opt.msgID;
             // 昵称额外存一份到dataset，方便以后做筛选/统计
             Line.dataset.uname = Opt.uname || "";
+
+            // 序号（可选）：只有开启 DG_Config.ShowIndex 时才加
+            // 放在最前面，形成"1. 正文"的编号列表观感
+            if (DG_Config.ShowIndex && Opt.index !== undefined) {
+                const IdxEl = document.createElement("span");
+                IdxEl.className = "DG_Index";
+                IdxEl.textContent = (Opt.index + 1) + ".";
+                Line.appendChild(IdxEl);
+            }
 
             // 正文（可能被拆成多段，这里用 <br> 串起来）
             const TextEl = document.createElement("span");
@@ -1079,17 +1626,21 @@
             });
             Line.appendChild(TextEl);
 
-            // 分隔符
-            const SepEl = document.createElement("span");
-            SepEl.className = "DG_Sep";
-            SepEl.textContent = "-";
-            Line.appendChild(SepEl);
+            // 昵称部分：开启序号模式时就不显示" - 昵称"了，
+            // 因为那种列表形态本来就是纯编号的，人名会显得杂乱
+            if (!DG_Config.ShowIndex) {
+                // 分隔符
+                const SepEl = document.createElement("span");
+                SepEl.className = "DG_Sep";
+                SepEl.textContent = "-";
+                Line.appendChild(SepEl);
 
-            // 用户昵称
-            const UserEl = document.createElement("span");
-            UserEl.className = "DG_User";
-            UserEl.textContent = String(Opt.uname);
-            Line.appendChild(UserEl);
+                // 用户昵称
+                const UserEl = document.createElement("span");
+                UserEl.className = "DG_User";
+                UserEl.textContent = String(Opt.uname);
+                Line.appendChild(UserEl);
+            }
 
             // 行尾的关闭按钮（鼠标悬停时才可见）
             DG_AttachClose(Line);
@@ -1120,8 +1671,12 @@
                 uname: Data.uname,
                 text: Hit.Text,
                 isSC: false,
-                msgID: Data.msg_id
+                msgID: Data.msg_id,
+                // 序号是"到目前为止第几条"，不做重排
+                // 因为删中间某行时重排会让其他行的编号跳变，观感更差
+                index: DG_TotalDanmaku
             });
+            DG_TotalDanmaku += 1;
 
             DG_Track(Line, Data.msg_id);
 
@@ -1140,8 +1695,9 @@
             // 出现第一条内容后把提示收起来
             if (DG_Dom.Tip) DG_Dom.Tip.style.display = "none";
 
-            // 打完卡自动滚到底部，保证最新一条可见
-            DG_AutoScroll();
+            // 这里原本有一句 DG_AutoScroll()，现在已经不需要了：
+            // #DG_DmZone 用了 column-reverse，容器天然停在视觉底部，
+            // 新行总是可见的，不需要任何JS干预。
         }
 
 
@@ -1213,16 +1769,201 @@
 
 
         /* ---------------------------------------------------------------------------
-         * 【滚动】让最新弹幕始终可见
+         * 【已废弃】自动滚动
+         * - 原本用来保证"最新一条可见"
+         * - 现在 #DG_DmZone 用 column-reverse + overflow:hidden 实现同一目的，
+         *   而且是从CSS层面天然成立的，比JS滚动更可靠（不闪烁、不依赖帧时序）
+         * - 保留这个空函数只是为了说明演进过程，可以直接删掉
          * -------------------------------------------------------------------------*/
-        function DG_AutoScroll() {
-            // 页面不滚动，改用OBS浏览器源自带的滚动不方便，所以这里做“容器内自动滚动”
-            // 给 #DG_DmZone 设 max-height 之后，这里滚动的就是它
-            // 没设 max-height 时 scrollHeight === clientHeight，等于什么都不做
-            DG_Dom.DmZone.scrollTo({
-                top: DG_Dom.DmZone.scrollHeight,
-                behavior: "smooth"
+        // function DG_AutoScroll() { ... }
+
+
+        /* ============================================================================
+         *  【本地桥接】从本地弹幕服务取数据
+         *
+         *  背景：浏览器受 CORS 限制，调不了 live-open.biliapi.com；
+         *        插件里也不能放开发者密钥。
+         *        所以由"本地程序.js"在浏览器之外完成签名+连长链，
+         *        再通过 localhost 的 WebSocket 把弹幕转发进来。
+         *
+         *  好处：主播不需要注册开发者账号、不需要插件上架，
+         *        只要双击运行本地程序即可。
+         *
+         *  回退：本地服务没开时，自动退回 SDK 直连（平台上架通道 / 本地自签调试）
+         * ==========================================================================*/
+        const DG_Bridge = {
+            Socket: null,
+            State: "idle",        // idle | connecting | connected | closed
+            RetryTimer: null,
+            GiveUpMs: 4000,       // 连不上就放弃，让SDK接手
+            SdkStarted: false,
+        };
+
+        /**
+         * 启动本地桥接
+         * @param {boolean} AllowFallback 连不上时是否让SDK接手
+         */
+        function DG_StartBridge(AllowFallback) {
+            if (!DG_Config.UseLocalBridge) {
+                if (AllowFallback) DG_StartSdk();
+                return;
+            }
+
+            DG_Bridge.State = "connecting";
+
+            let Socket;
+            try {
+                Socket = new WebSocket(DG_Config.LocalBridgeUrl);
+            } catch (E) {
+                console.log("[点怪插件] 本地服务地址不合法，改用SDK直连");
+                if (AllowFallback) DG_StartSdk();
+                return;
+            }
+            DG_Bridge.Socket = Socket;
+
+            // 连不上的兜底：等一小会儿还没连上，就认为本地服务没开
+            const FallbackTimer = setTimeout(() => {
+                if (DG_Bridge.State === "connecting") {
+                    console.log("[点怪插件] 本地服务未响应，改用SDK直连");
+                    try { Socket.close(); } catch (E) { }
+                    DG_Bridge.State = "closed";
+                    if (AllowFallback) DG_StartSdk();
+                }
+            }, DG_Bridge.GiveUpMs);
+
+            Socket.addEventListener("open", () => {
+                clearTimeout(FallbackTimer);
+                DG_Bridge.State = "connected";
+                console.log("[点怪插件] 已连上本地弹幕服务，开始接收弹幕");
+                DG_SetTip("已连接本地服务，等待“点怪”弹幕…");
+                // 连上后不再重试，交给正常流程
+                DG_Bridge.RetryTimer = null;
             });
+
+            Socket.addEventListener("message", (Evt) => {
+                let Msg = null;
+                try { Msg = JSON.parse(Evt.data); } catch (E) { return; }
+                DG_HandleBridgeMsg(Msg);
+            });
+
+            Socket.addEventListener("close", () => {
+                clearTimeout(FallbackTimer);
+                const WasConnected = DG_Bridge.State === "connected";
+                DG_Bridge.State = "closed";
+
+                if (WasConnected) {
+                    console.warn("[点怪插件] 本地服务断开，正在重连…");
+                    DG_SetTip("与本地服务的连接已断开，正在重连…");
+                }
+                // 无论之前是否连上，都持续重试（主播可能中途才启动本地程序）
+                DG_ScheduleBridgeRetry(AllowFallback);
+            });
+
+            Socket.addEventListener("error", () => {
+                // 具体错误交给 close 处理，这里不重复报
+            });
+        }
+
+        /**
+         * 断开后定时重试
+         */
+        function DG_ScheduleBridgeRetry(AllowFallback) {
+            if (DG_Bridge.RetryTimer) return;
+            DG_Bridge.RetryTimer = setTimeout(() => {
+                DG_Bridge.RetryTimer = null;
+                if (DG_Bridge.State === "closed") {
+                    console.log("[点怪插件] 重试连接本地服务…");
+                    // 重试阶段不再回退SDK（已经在跑或已经放弃过了）
+                    DG_StartBridge(false);
+                }
+            }, DG_Config.LocalBridgeRetryMs);
+        }
+
+        /**
+         * 处理本地服务转发来的消息
+         * - 结构由 本地程序.js 决定：
+         *     {type:"status", state:"connected"|"disconnected"}
+         *     {type:"event",  cmd:"LIVE_OPEN_PLATFORM_XXX", data:{...}}
+         */
+        function DG_HandleBridgeMsg(Msg) {
+            if (!Msg || !Msg.type) return;
+
+            if (Msg.type === "status") {
+                if (Msg.state === "connected") {
+                    DG_SetTip("已连接直播间，等待“点怪”弹幕…");
+                }
+                return;
+            }
+
+            if (Msg.type !== "event") return;
+
+            // 复用 SDK 的事件分发逻辑：
+            // 把转发来的事件重新组装成 SDK 期望的格式，
+            // 交给 NewJSONMsg 处理 —— 这样过滤规则只有一份，
+            // 不会出现"本地模式和SDK模式行为不一致"
+            if (Msg.cmd === "LIVE_OPEN_PLATFORM_SUPER_CHAT_DEL") {
+                // SC撤回也走同一条路：SDK里这个分支会调 DelSC
+                BiLive_PlayWithMeJS_WEBSocketClient.NewJSONMsg({
+                    cmd: Msg.cmd,
+                    data: Msg.data,
+                });
+                return;
+            }
+
+            BiLive_PlayWithMeJS_WEBSocketClient.NewJSONMsg({
+                cmd: Msg.cmd,
+                data: Msg.data,
+            });
+        }
+
+        /**
+         * 设置底部提示文字
+         */
+        function DG_SetTip(Text) {
+            const Tip = document.getElementById("DG_Tip");
+            if (!Tip) return;
+            // 已经出过弹幕就不再显示提示，避免盖住内容
+            if (Tip.style.display === "none") return;
+            Tip.textContent = Text;
+        }
+
+        /**
+         * 启动 SDK 直连（平台上架通道，或本地自签调试）
+         */
+        function DG_StartSdk() {
+            if (DG_Bridge.SdkStarted) return;
+            DG_Bridge.SdkStarted = true;
+            console.log("[点怪插件] 通过 SDK 启动");
+            // ===== STANDARD_CODESIGN_PATCH（由 生成index.js 自动插入，勿手改）=====
+        // 说明：BiLive_PlayWithMeJS.Init() 的原逻辑是
+        //   "URL里没有 CODE 参数 → 弹出身份码索要窗"
+        // 但平台上架后，平台下发的是 CODESIGN 而不是 CODE，
+        // 于是主播打开插件会莫名被索要身份码。
+        // 这里包一层：只要检测到 CODESIGN，就跳过弹窗，直接走 AppStart。
+        // 本补丁只存在于生产副本(由 生成index.js 插入)，源文件一个字都没改，
+        // 所以本地调试时该弹窗还是照常弹，方便你手动填身份码。
+        (function () {
+            const OrigInit = BiLive_PlayWithMeJS.Init;
+
+            BiLive_PlayWithMeJS.Init = function () {
+                // 不带 hook 的原调用：让它解析URL参数、填充 Paramaters
+                OrigInit.apply(this, arguments);
+
+                const HasCodeSign = BiLive_PlayWithMeJS.Paramaters.has("CODESIGN");
+                const HasCode = BiLive_PlayWithMeJS.Paramaters.has("CODE");
+
+                if (HasCodeSign && !HasCode) {
+                    // 关掉SDK误弹的索码窗
+                    if (typeof BiLive_PlayWithMeJS_AuthDialog !== "undefined") {
+                        try { BiLive_PlayWithMeJS_AuthDialog.Hide(); } catch (E) { }
+                    }
+                    console.log("[点怪插件] 检测到平台下发的 CODESIGN，跳过身份码窗，直接申请启动");
+                    BiLive_PlayWithMeJS.AppStart();
+                }
+            };
+        })();
+
+        BiLive_PlayWithMeJS.Init();
         }
 
 
@@ -1367,38 +2108,11 @@
         // 没传的话SDK会自动弹窗索要身份码。
 
         // 最后一步：启动
-        // 只有显示页才启动开平长链；设置页到此为止
+        // 只有显示页才真正取数据；设置页到此为止
         if (!DG_IsSettingPage) {
-            // ===== STANDARD_CODESIGN_PATCH（由 生成index.js 自动插入，勿手改）=====
-        // 说明：BiLive_PlayWithMeJS.Init() 的原逻辑是
-        //   "URL里没有 CODE 参数 → 弹出身份码索要窗"
-        // 但平台上架后，平台下发的是 CODESIGN 而不是 CODE，
-        // 于是主播打开插件会莫名被索要身份码。
-        // 这里包一层：只要检测到 CODESIGN，就跳过弹窗，直接走 AppStart。
-        // 本补丁只存在于生产副本(由 生成index.js 插入)，源文件一个字都没改，
-        // 所以本地调试时该弹窗还是照常弹，方便你手动填身份码。
-        (function () {
-            const OrigInit = BiLive_PlayWithMeJS.Init;
-
-            BiLive_PlayWithMeJS.Init = function () {
-                // 不带 hook 的原调用：让它解析URL参数、填充 Paramaters
-                OrigInit.apply(this, arguments);
-
-                const HasCodeSign = BiLive_PlayWithMeJS.Paramaters.has("CODESIGN");
-                const HasCode = BiLive_PlayWithMeJS.Paramaters.has("CODE");
-
-                if (HasCodeSign && !HasCode) {
-                    // 关掉SDK误弹的索码窗
-                    if (typeof BiLive_PlayWithMeJS_AuthDialog !== "undefined") {
-                        try { BiLive_PlayWithMeJS_AuthDialog.Hide(); } catch (E) { }
-                    }
-                    console.log("[点怪插件] 检测到平台下发的 CODESIGN，跳过身份码窗，直接申请启动");
-                    BiLive_PlayWithMeJS.AppStart();
-                }
-            };
-        })();
-
-        BiLive_PlayWithMeJS.Init();
+            // 先尝试本地弹幕服务（主播模式：不需要上架、不需要开发者账号）
+            // 连不上会自动回退到 SDK 直连（平台上架通道 / 本地自签调试）
+            DG_StartBridge(true);
         } else {
             console.log("[点怪插件] 当前为设置页 (plug_env=1)，不启动开平长链");
         }

@@ -712,11 +712,11 @@
 
             // 是否启用"本地弹幕服务"模式
             //
-            //   true  → 优先从本地服务取弹幕（本地程序.js 提供的 WebSocket）
-            //           本地服务没开时，会自动回退到 SDK 直连
-            //           这是给主播用的模式，不需要上架、不需要身份码
+            //   true  → 优先从本地服务取弹幕（本地程序.js 在 127.0.0.1 起服务）
+            //           这个模式只在"页面也是从本地服务加载"时有意义，
+            //           因为 127.0.0.1 只在本机可用
             //
-            //   false → 只用 SDK（需要平台上架通道，或本地自签调试）
+            //   false → 走平台上架通道（审核版用这个）
             UseLocalBridge: false,
 
             // 本地服务地址。端口要和 本地程序.js 里的 CONFIG.Port 一致
@@ -724,6 +724,20 @@
 
             // 本地服务的连接重试间隔（毫秒）
             LocalBridgeRetryMs: 3000,
+
+            /* ---------- 代签服务器 ---------- */
+
+            // 平台上架版必须配这个。
+            //
+            // 原因：上架后插件跑在 play-live.bilibili.com 的 iframe 里，
+            // 而要请求的 live-open.biliapi.com 是另一个域，
+            // 浏览器同源策略会拦住请求 —— 插件自己调不了这个接口。
+            //
+            // 所以需要一个服务端代为签名。地址指向你部署的那个服务，
+            // 它会收到 {AppID, Code, CodeSign, Mid, Timestamp} 并返回长链信息。
+            //
+            // 留空 = 不启用（本地自签调试时不需要）
+            AuthorizeServer: "",
             // 同一秒内同一个人发的一模一样的内容，算重复，直接忽略
             // 弹幕重连时偶尔会重放，开平长链没有原生去重
             DuplicateWindowMs: 1000,
@@ -2096,6 +2110,18 @@
         function DG_StartSdk() {
             if (DG_Bridge.SdkStarted) return;
             DG_Bridge.SdkStarted = true;
+
+            // 如果配了代签服务器，交给 SDK 走"同源POST代签"路径。
+            // 这一步必须在 Init() 之前做，因为 Init() 里会立刻判断
+            // Chk_SameOriginAuthorizerServer() 来决定走哪条路。
+            if (DG_Config.AuthorizeServer) {
+                BiLive_PlayWithMeJS_Authorizer.SameOriginAuthorizerServer = DG_Config.AuthorizeServer;
+                console.log("[点怪插件] 使用代签服务器: " + DG_Config.AuthorizeServer);
+            } else {
+                console.log("[点怪插件] 未配置代签服务器 —— " +
+                    "插件自己调 /v2/app/start 会被浏览器CORS拦截，可能收不到弹幕");
+            }
+
             console.log("[点怪插件] 通过 SDK 启动");
             // ===== STANDARD_CODESIGN_PATCH（由 生成index.js 自动插入，勿手改）=====
         // 说明：BiLive_PlayWithMeJS.Init() 的原逻辑是
